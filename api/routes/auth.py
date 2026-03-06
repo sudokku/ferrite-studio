@@ -1,16 +1,20 @@
 """
 Authentication routes.
 
-POST /auth/register   — create a new user account
-POST /auth/login      — validate credentials, set httpOnly cookies
-POST /auth/logout     — clear auth cookies
-POST /auth/refresh    — exchange refresh token for new access token
-GET  /auth/me         — return current user info
-GET  /auth/oauth/github          — redirect to GitHub OAuth
+POST /auth/register           — create a new user account
+POST /auth/login              — validate credentials, set httpOnly cookies
+POST /auth/logout             — clear auth cookies
+POST /auth/refresh            — exchange refresh token for new access token
+GET  /auth/me                 — return current user info
+PATCH /auth/me                — update username / email
+POST /auth/change-password    — change password, invalidate outstanding tokens
+DELETE /auth/me               — delete own account and all associated data
+GET  /auth/oauth/github       — redirect to GitHub OAuth
 GET  /auth/oauth/github/callback — handle GitHub OAuth callback
-GET  /auth/oauth/google          — redirect to Google OAuth
+GET  /auth/oauth/google       — redirect to Google OAuth
 GET  /auth/oauth/google/callback — handle Google OAuth callback
 """
+import asyncio
 import logging
 import uuid
 from datetime import timezone
@@ -26,8 +30,10 @@ from auth.hashing import hash_password, verify_password
 from auth.jwt import create_access_token, create_refresh_token, decode_token
 from auth.oauth import get_github_client, get_google_client
 from config import get_settings
-from dependencies import get_db, require_user
+from dependencies import get_db, get_storage, require_user
 from models.user import User
+from schemas.auth import ChangePasswordSchema, DeleteSelfSchema, UpdateProfileSchema
+from storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +72,13 @@ def _clear_auth_cookies(response: Response) -> None:
     response.delete_cookie(_REFRESH_COOKIE)
 
 
+def _token_data(user: User) -> dict:
+    """Build the JWT payload dict for a user (includes token_version)."""
+    return {"sub": user.id, "token_version": user.token_version}
+
+
 # ---------------------------------------------------------------------------
-# Pydantic schemas
+# Pydantic schemas (auth-specific; profile/password schemas live in schemas/auth.py)
 # ---------------------------------------------------------------------------
 
 class RegisterRequest(BaseModel):
@@ -160,8 +171,8 @@ async def login(body: LoginRequest, response: Response, db: AsyncSession = Depen
             detail="Account is disabled.",
         )
 
-    token_data = {"sub": user.id}
-    _set_auth_cookies(response, create_access_token(token_data), create_refresh_token(token_data))
+    td = _token_data(user)
+    _set_auth_cookies(response, create_access_token(td), create_refresh_token(td))
 
     logger.info("User logged in: %s", user.id)
     return {"ok": True, "username": user.username}
@@ -175,7 +186,7 @@ async def logout(response: Response):
 
 
 @router.post("/refresh")
-async def refresh(request: Request, response: Response):
+async def refresh(request: Request, response: Response, db: AsyncSession = Depends(get_db)):
     """Issue a new access token using the refresh token cookie."""
     token: str | None = request.cookies.get(_REFRESH_COOKIE)
     if not token:
@@ -191,7 +202,19 @@ async def refresh(request: Request, response: Response):
             detail="Refresh token payload is invalid.",
         )
 
-    new_access = create_access_token({"sub": user_id})
+    # Verify token_version if present in refresh token
+    token_version = payload.get("token_version")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user: User | None = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found.")
+    if token_version is not None and token_version != user.token_version:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has been invalidated. Please log in again.",
+        )
+
+    new_access = create_access_token(_token_data(user))
     settings = get_settings()
     response.set_cookie(
         key=_ACCESS_COOKIE,
@@ -207,20 +230,143 @@ async def refresh(request: Request, response: Response):
 @router.get("/me", response_model=UserOut)
 async def me(
     request: Request,
-    db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(require_user),
+    current_user: User = Depends(require_user),
 ):
     """Return the currently authenticated user's profile."""
-    result = await db.execute(select(User).where(User.id == user_id))
-    user: User | None = result.scalars().first()
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found.")
     return UserOut(
-        id=user.id,
-        email=user.email,
-        username=user.username,
-        created_at=user.created_at.isoformat(),
+        id=current_user.id,
+        email=current_user.email,
+        username=current_user.username,
+        created_at=current_user.created_at.isoformat(),
     )
+
+
+@router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: UpdateProfileSchema,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update the current user's username and/or email."""
+    if body.username is None and body.email is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="At least one of username or email must be provided.",
+        )
+
+    if body.email and body.email != current_user.email:
+        existing = await db.execute(select(User).where(User.email == body.email))
+        if existing.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email is already in use.",
+            )
+        current_user.email = body.email
+
+    if body.username and body.username != current_user.username:
+        existing = await db.execute(select(User).where(User.username == body.username))
+        if existing.scalars().first():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username is already in use.",
+            )
+        current_user.username = body.username
+
+    try:
+        await db.commit()
+        await db.refresh(current_user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username or email is already in use.",
+        )
+
+    return UserOut(
+        id=current_user.id,
+        email=current_user.email,
+        username=current_user.username,
+        created_at=current_user.created_at.isoformat(),
+    )
+
+
+@router.post("/change-password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_password(
+    body: ChangePasswordSchema,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Change password for the current user.
+
+    Increments token_version so all outstanding access/refresh tokens are invalidated.
+    """
+    if not current_user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot change password for OAuth-only accounts.",
+        )
+    if not verify_password(body.current_password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect.",
+        )
+
+    current_user.hashed_password = hash_password(body.new_password)
+    current_user.token_version = (current_user.token_version or 0) + 1
+    await db.commit()
+    return None
+
+
+@router.delete("/me", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_me(
+    body: DeleteSelfSchema,
+    response: Response,
+    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
+    storage: StorageBackend = Depends(get_storage),
+):
+    """
+    Delete the current user's account.
+
+    Steps:
+    1. Verify password.
+    2. Collect all storage keys for the user's trained models.
+    3. Delete the user from DB (CASCADE removes architectures + trained_models rows).
+    4. Delete files from storage (after DB commit, with return_exceptions=True).
+    5. Clear auth cookies.
+    """
+    from models.resources import TrainedModel  # local import
+    from sqlalchemy import select as sa_select
+
+    if not current_user.hashed_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete via password for OAuth-only accounts.",
+        )
+    if not verify_password(body.password, current_user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Password is incorrect.",
+        )
+
+    # Collect storage keys before deleting the user
+    models_result = await db.execute(
+        sa_select(TrainedModel.storage_key).where(TrainedModel.owner_id == current_user.id)
+    )
+    storage_keys = [row[0] for row in models_result.all()]
+
+    await db.delete(current_user)
+    await db.commit()
+
+    # Delete storage files after DB commit (best-effort)
+    await asyncio.gather(
+        *[storage.delete(key) for key in storage_keys],
+        return_exceptions=True,
+    )
+
+    _clear_auth_cookies(response)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +415,8 @@ async def oauth_github_callback(request: Request, response: Response, db: AsyncS
     user = await _upsert_oauth_user(db, email=email, provider="github", provider_id=oauth_id,
                                     username=github_user.get("login", email.split("@")[0]))
 
-    token_data = {"sub": user.id}
-    _set_auth_cookies(response, create_access_token(token_data), create_refresh_token(token_data))
+    td = _token_data(user)
+    _set_auth_cookies(response, create_access_token(td), create_refresh_token(td))
 
     settings = get_settings()
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
@@ -312,8 +458,8 @@ async def oauth_google_callback(request: Request, response: Response, db: AsyncS
     username = userinfo.get("name") or email.split("@")[0]
     user = await _upsert_oauth_user(db, email=email, provider="google", provider_id=oauth_id, username=username)
 
-    token_data = {"sub": user.id}
-    _set_auth_cookies(response, create_access_token(token_data), create_refresh_token(token_data))
+    td = _token_data(user)
+    _set_auth_cookies(response, create_access_token(td), create_refresh_token(td))
 
     settings = get_settings()
     frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")

@@ -1,5 +1,6 @@
 import logging
 from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,6 +36,16 @@ class Settings(BaseSettings):
 
     # CORS — comma-separated list of allowed origins
     CORS_ORIGINS: str = "http://localhost:5173"
+
+    # Storage
+    STORAGE_BACKEND: str = "local"
+    LOCAL_STORAGE_ROOT: Path = Path("./data/storage")
+    S3_BUCKET: str = ""
+    S3_REGION: str = "us-east-1"
+    S3_ENDPOINT_URL: str = ""
+
+    # Admin bootstrap — if set, promote this email to admin on startup
+    FIRST_ADMIN_EMAIL: str = ""
 
     @property
     def cors_origins_list(self) -> list[str]:

@@ -72,7 +72,7 @@ async def _stream_response(response: httpx.Response) -> AsyncIterator[bytes]:
 async def proxy(
     path: str,
     request: Request,
-    user_id: str = Depends(require_user),
+    current_user=Depends(require_user),
 ):
     """
     Authenticated transparent proxy to the Rust ferrite-nn studio service.
@@ -88,7 +88,7 @@ async def proxy(
     if request.url.query:
         upstream_url = f"{upstream_url}?{request.url.query}"
 
-    headers = _build_upstream_headers(request, user_id)
+    headers = _build_upstream_headers(request, current_user.id)
 
     # Use a per-request client with generous timeouts for long-running SSE streams.
     # read timeout is None so SSE connections can remain open indefinitely.

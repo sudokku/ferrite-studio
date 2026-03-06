@@ -1,10 +1,16 @@
+import enum
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, Enum as SAEnum, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
+
+
+class UserRole(str, enum.Enum):
+    user = "user"
+    admin = "admin"
 
 
 class User(Base):
@@ -29,3 +35,14 @@ class User(Base):
         nullable=False,
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # RBAC
+    role: Mapped[UserRole] = mapped_column(
+        SAEnum(UserRole, values_callable=lambda x: [e.value for e in x]),
+        default=UserRole.user,
+        nullable=False,
+        server_default=UserRole.user.value,
+    )
+
+    # JWT invalidation — increment on password change to invalidate outstanding tokens
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
