@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Trash2 } from 'lucide-react'
 import { getArchitect, saveArchitect, type LayerSpec, type SaveArchitectBody } from '@/api/architect'
+import { saveArchitecture } from '@/api/userResources'
+import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,6 +23,7 @@ type InputKind = 'numeric' | 'grayscale' | 'rgb'
 
 export function ArchitectPage() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const { data, isLoading } = useQuery({ queryKey: ['architect'], queryFn: getArchitect })
 
   const [name, setName] = useState('')
@@ -39,6 +42,11 @@ export function ArchitectPage() {
   const [imgHeight, setImgHeight] = useState('28')
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+
+  // Library save state (separate from Rust save)
+  const [libError, setLibError] = useState<string | null>(null)
+  const [libSuccess, setLibSuccess] = useState(false)
+  const [libPending, setLibPending] = useState(false)
 
   const mutation = useMutation({
     mutationFn: saveArchitect,
@@ -59,24 +67,41 @@ export function ArchitectPage() {
   const updateLayer = (i: number, field: keyof LayerSpec, value: string | number) =>
     setLayers(l => l.map((layer, idx) => idx === i ? { ...layer, [field]: value } : layer))
 
+  const buildBody = (): SaveArchitectBody => ({
+    name,
+    description,
+    input_size: Number(inputSize),
+    loss_type: lossType,
+    learning_rate: Number(lr),
+    batch_size: Number(batchSize),
+    epochs: Number(epochs),
+    layers,
+    input_type:
+      inputKind === 'numeric'
+        ? { kind: 'numeric' }
+        : { kind: inputKind, width: Number(imgWidth), height: Number(imgHeight) },
+  })
+
   const handleSave = () => {
     setError(null)
     setSuccess(false)
-    const body: SaveArchitectBody = {
-      name,
-      description,
-      input_size: Number(inputSize),
-      loss_type: lossType,
-      learning_rate: Number(lr),
-      batch_size: Number(batchSize),
-      epochs: Number(epochs),
-      layers,
-      input_type:
-        inputKind === 'numeric'
-          ? { kind: 'numeric' }
-          : { kind: inputKind, width: Number(imgWidth), height: Number(imgHeight) },
+    mutation.mutate(buildBody())
+  }
+
+  const handleSaveToLibrary = async () => {
+    setLibError(null)
+    setLibSuccess(false)
+    setLibPending(true)
+    try {
+      const body = buildBody()
+      const libName = name.trim() || 'Untitled'
+      await saveArchitecture(libName, body as unknown as Record<string, unknown>)
+      setLibSuccess(true)
+    } catch (err) {
+      setLibError(err instanceof Error ? err.message : 'Failed to save to library')
+    } finally {
+      setLibPending(false)
     }
-    mutation.mutate(body)
   }
 
   if (isLoading) return <div className="p-8 text-muted-foreground">Loading...</div>
@@ -242,6 +267,26 @@ export function ArchitectPage() {
       <Button onClick={handleSave} disabled={mutation.isPending} className="w-full">
         {mutation.isPending ? 'Saving...' : 'Save architecture'}
       </Button>
+
+      {/* Save to library — only shown when logged in */}
+      {user !== null && (
+        <div className="space-y-2">
+          <Button
+            variant="outline"
+            onClick={() => void handleSaveToLibrary()}
+            disabled={libPending}
+            className="w-full"
+          >
+            {libPending ? 'Saving to library...' : 'Save to my library'}
+          </Button>
+          {libError && <p className="text-sm text-destructive">{libError}</p>}
+          {libSuccess && (
+            <p className="text-sm text-green-600 dark:text-green-400">
+              Architecture saved to your library.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

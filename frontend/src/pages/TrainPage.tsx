@@ -12,7 +12,9 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import { getTrainStatus, startTraining, stopTraining } from '@/api/train'
+import { importModel } from '@/api/userResources'
 import { useTrainSSE } from '@/hooks/useSSE'
+import { useAuth } from '@/context/AuthContext'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -32,6 +34,7 @@ function StatusBadge({ status }: { status: TrainStatus }) {
 
 export function TrainPage() {
   const qc = useQueryClient()
+  const { user } = useAuth()
   const { data } = useQuery({
     queryKey: ['train'],
     queryFn: getTrainStatus,
@@ -40,11 +43,16 @@ export function TrainPage() {
   const [streaming, setStreaming] = useState(false)
   const sse = useTrainSSE(streaming)
 
+  // Library save state
+  const [libStatus, setLibStatus] = useState<'idle' | 'loading' | 'ok' | 'error'>('idle')
+  const [libError, setLibError] = useState<string | null>(null)
+
   const startMut = useMutation({
     mutationFn: startTraining,
     onSuccess: (res) => {
       if (!res.error) {
         setStreaming(true)
+        setLibStatus('idle')
         void qc.invalidateQueries({ queryKey: ['train'] })
       }
     },
@@ -79,6 +87,32 @@ export function TrainPage() {
     : 0
 
   const displayStatus: TrainStatus = streaming ? 'running' : (data?.status ?? 'idle')
+
+  // Derive model name from model_path (strip prefix + .json suffix)
+  const deriveModelName = (modelPath: string): string => {
+    return modelPath
+      .replace(/^trained_models\//, '')
+      .replace(/\.json$/i, '')
+  }
+
+  const handleSaveToLibrary = async () => {
+    if (!data?.model_path) return
+    setLibStatus('loading')
+    setLibError(null)
+    try {
+      const modelName = deriveModelName(data.model_path)
+      // Fetch the model file from the Rust service
+      const res = await fetch(`/api/models/${encodeURIComponent(modelName)}/download`)
+      if (!res.ok) throw new Error(`Download failed: ${res.statusText}`)
+      const blob = await res.blob()
+      const file = new File([blob], `${modelName}.json`, { type: 'application/json' })
+      await importModel(file, modelName)
+      setLibStatus('ok')
+    } catch (err) {
+      setLibStatus('error')
+      setLibError(err instanceof Error ? err.message : 'Failed to save to library')
+    }
+  }
 
   return (
     <div className="p-8 max-w-4xl mx-auto space-y-6">
@@ -204,13 +238,33 @@ export function TrainPage() {
 
       {data?.status === 'done' && data.model_path && (
         <Card className="border-green-500/30 bg-green-500/5">
-          <CardContent className="pt-4 text-sm">
+          <CardContent className="pt-4 space-y-3 text-sm">
             <p className="font-medium text-green-600 dark:text-green-400">Training complete</p>
             <p className="text-muted-foreground">Model saved to: {data.model_path}</p>
             {data.elapsed_total_ms !== null && (
               <p className="text-muted-foreground">
                 Total time: {(data.elapsed_total_ms / 1000).toFixed(1)}s
               </p>
+            )}
+            {/* Save to library — only when signed in */}
+            {user !== null && (
+              <div className="space-y-1 pt-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={libStatus === 'loading' || libStatus === 'ok'}
+                  onClick={() => void handleSaveToLibrary()}
+                >
+                  {libStatus === 'loading'
+                    ? 'Saving to library...'
+                    : libStatus === 'ok'
+                    ? 'Saved to library'
+                    : 'Save to my library'}
+                </Button>
+                {libStatus === 'error' && libError && (
+                  <p className="text-xs text-destructive">{libError}</p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
