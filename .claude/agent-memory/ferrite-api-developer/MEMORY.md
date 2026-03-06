@@ -9,7 +9,7 @@
 - `POST /auth/login` — sets access_token + refresh_token httpOnly cookies
 - `POST /auth/logout` — clears both cookies
 - `POST /auth/refresh` — issues new access_token from refresh_token cookie (validates token_version)
-- `GET  /auth/me` — returns {id, email, username, created_at}
+- `GET  /auth/me` — returns {"user": {id, email, username, role, created_at}} when authed, or {"user": null} (200) when not — never 401 (reduces log noise)
 - `PATCH /auth/me` — update username/email (409 on conflict)
 - `POST /auth/change-password` — hashes new password, increments token_version, 204
 - `DELETE /auth/me` — verify password, cascade delete + storage cleanup, clear cookies, 204
@@ -17,12 +17,16 @@
 - `GET  /auth/oauth/google` + `/auth/oauth/google/callback`
 - `GET/POST /user/architectures`, `GET/DELETE /user/architectures/{id}`
 - `GET /user/models`, `POST /user/models/import`, `GET /user/models/{id}`, `GET /user/models/{id}/download`, `DELETE /user/models/{id}`
-- `GET /admin/users`, `DELETE /admin/users/{user_id}`, `PATCH /admin/users/{user_id}/role`, `GET /admin/stats`
+- `GET /admin/users` (with `search` param), `DELETE /admin/users/{user_id}`, `PATCH /admin/users/{user_id}/role`, `PATCH /admin/users/{user_id}/active`, `GET /admin/users/{user_id}`, `GET /admin/users/{user_id}/architectures`, `GET /admin/users/{user_id}/models`, `GET /admin/stats`
+- `GET /admin/architectures` (with `user_id`, `search`, `limit`, `offset`), `DELETE /admin/architectures/{arch_id}`
+- `GET /admin/models` (with `user_id`, `search`, `limit`, `offset`), `DELETE /admin/models/{model_id}`
 - `ALL  /api/{path}` — authenticated reverse proxy to Rust :7878
 
-## Cookie names
-- `access_token` — httpOnly, samesite=lax, max_age = ACCESS_TOKEN_EXPIRE_MINUTES*60
-- `refresh_token` — httpOnly, samesite=lax, max_age = REFRESH_TOKEN_EXPIRE_DAYS*86400
+## Cookie names & settings
+- `access_token` — httpOnly, samesite=lax, path="/", secure=COOKIE_SECURE, max_age = ACCESS_TOKEN_EXPIRE_MINUTES*60
+- `refresh_token` — httpOnly, samesite=lax, path="/", secure=COOKIE_SECURE, max_age = REFRESH_TOKEN_EXPIRE_DAYS*86400
+- `COOKIE_SECURE` env var (default False) — must be True in production (HTTPS)
+- path="/" is REQUIRED: without it cookies default to the response path (e.g. /auth/login) and won't be sent on /api/* requests
 
 ## Key architectural decisions
 - JWT payload: `{sub: user_id, token_version: int}` — version validated on every auth'd request
@@ -54,6 +58,7 @@
 - `models/resources.py` — Architecture + TrainedModel ORM models
 - `routes/user_resources.py` — /user/* endpoints
 - `routes/admin.py` — /admin/* endpoints
+- Admin cross-resource JOIN pattern: `select(Architecture, User).join(User, Architecture.owner_id == User.id)` — never rely on lazy load (lazy="raise" on relationships). Rows come back as `(arch, user)` tuples.
 
 ## Testing
 - pytest-asyncio with `asyncio_mode = auto` (see pytest.ini)
@@ -64,4 +69,4 @@
 
 ## Environment variables
 See `config.py` Settings class. Required: SECRET_KEY.
-New: STORAGE_BACKEND, LOCAL_STORAGE_ROOT, S3_BUCKET, S3_REGION, S3_ENDPOINT_URL, FIRST_ADMIN_EMAIL
+New: STORAGE_BACKEND, LOCAL_STORAGE_ROOT, S3_BUCKET, S3_REGION, S3_ENDPOINT_URL, FIRST_ADMIN_EMAIL, COOKIE_SECURE
