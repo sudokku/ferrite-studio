@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     S3_REGION: str = "us-east-1"
     S3_ENDPOINT_URL: str = ""
 
+    # Cookie security — set to True in production (HTTPS only)
+    COOKIE_SECURE: bool = False
+
     # Admin bootstrap — if set, promote this email to admin on startup
     FIRST_ADMIN_EMAIL: str = ""
 

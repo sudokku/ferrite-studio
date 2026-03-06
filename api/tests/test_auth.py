@@ -141,16 +141,20 @@ async def test_me_authenticated(client: AsyncClient):
     me_resp = await client.get(_ME_URL, cookies={"access_token": token})
     assert me_resp.status_code == 200
     body = me_resp.json()
-    assert body["email"] == "grace@example.com"
-    assert body["username"] == "grace"
-    assert "id" in body
-    assert "created_at" in body
+    # Response is wrapped: {"user": {...}}
+    assert body["user"] is not None
+    assert body["user"]["email"] == "grace@example.com"
+    assert body["user"]["username"] == "grace"
+    assert "id" in body["user"]
+    assert "created_at" in body["user"]
 
 
 @pytest.mark.asyncio
 async def test_me_no_cookie(client: AsyncClient):
+    # Unauthenticated probe returns 200 {"user": null} — no console noise.
     resp = await client.get(_ME_URL)
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    assert resp.json() == {"user": None}
 
 
 @pytest.mark.asyncio
@@ -161,8 +165,10 @@ async def test_me_expired_token(client: AsyncClient):
     user_id = register_resp.json()["user_id"]
     expired = _make_expired_token(user_id)
 
+    # Expired token is treated the same as no token — 200 {"user": null}.
     resp = await client.get(_ME_URL, cookies={"access_token": expired})
-    assert resp.status_code == 401
+    assert resp.status_code == 200
+    assert resp.json() == {"user": None}
 
 
 # ---------------------------------------------------------------------------

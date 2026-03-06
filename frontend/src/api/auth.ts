@@ -48,9 +48,9 @@ export async function logout(): Promise<void> {
 
 export async function getMe(): Promise<UserProfile | null> {
   const res = await fetch('/auth/me', { credentials: 'include' })
-  if (res.status === 401) return null
   if (!res.ok) return null
-  return res.json() as Promise<UserProfile>
+  const data = await res.json() as { user?: UserProfile | null }
+  return data.user ?? null
 }
 
 export async function updateProfile(

@@ -54,7 +54,8 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         value=access_token,
         httponly=True,
         samesite="lax",
-        secure=False,  # set to True behind HTTPS in production
+        secure=settings.COOKIE_SECURE,
+        path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
     response.set_cookie(
@@ -62,7 +63,8 @@ def _set_auth_cookies(response: Response, access_token: str, refresh_token: str)
         value=refresh_token,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.COOKIE_SECURE,
+        path="/",
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
     )
 
@@ -111,6 +113,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     username: str
+    role: str
     created_at: str
 
     model_config = {"from_attributes": True}
@@ -221,24 +224,57 @@ async def refresh(request: Request, response: Response, db: AsyncSession = Depen
         value=new_access,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=settings.COOKIE_SECURE,
+        path="/",
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
     )
     return {"ok": True}
 
 
-@router.get("/me", response_model=UserOut)
+@router.get("/me")
 async def me(
     request: Request,
-    current_user: User = Depends(require_user),
+    db: AsyncSession = Depends(get_db),
 ):
-    """Return the currently authenticated user's profile."""
-    return UserOut(
-        id=current_user.id,
-        email=current_user.email,
-        username=current_user.username,
-        created_at=current_user.created_at.isoformat(),
-    )
+    """
+    Return the currently authenticated user's profile.
+
+    Returns {"user": <profile>} when authenticated, or {"user": null} (HTTP 200)
+    when no valid access token cookie is present.  This avoids noisy 401 entries
+    in the uvicorn console during the frontend's on-load session probe.
+    """
+    from models.user import User as UserModel  # local import to avoid circular dep
+
+    token: str | None = request.cookies.get(_ACCESS_COOKIE)
+    if not token:
+        return {"user": None}
+
+    try:
+        payload = decode_token(token)
+    except HTTPException:
+        return {"user": None}
+
+    user_id: str | None = payload.get("sub")
+    if not user_id:
+        return {"user": None}
+
+    token_version: int | None = payload.get("token_version")
+    result = await db.execute(select(UserModel).where(UserModel.id == user_id))
+    user: UserModel | None = result.scalars().first()
+    if not user or not user.is_active:
+        return {"user": None}
+    if token_version is not None and token_version != user.token_version:
+        return {"user": None}
+
+    return {
+        "user": UserOut(
+            id=user.id,
+            email=user.email,
+            username=user.username,
+            role=user.role.value if hasattr(user.role, "value") else str(user.role),
+            created_at=user.created_at.isoformat(),
+        )
+    }
 
 
 @router.patch("/me", response_model=UserOut)
@@ -286,6 +322,7 @@ async def update_me(
         id=current_user.id,
         email=current_user.email,
         username=current_user.username,
+        role=current_user.role.value if hasattr(current_user.role, "value") else str(current_user.role),
         created_at=current_user.created_at.isoformat(),
     )
 
