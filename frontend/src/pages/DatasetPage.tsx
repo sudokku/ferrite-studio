@@ -23,6 +23,11 @@ export function DatasetPage() {
   const [error, setError] = useState<string | null>(null)
   const [showLargeFileHint, setShowLargeFileHint] = useState(false)
 
+  // Bug 3: track selected file names for display
+  const [selectedCsvName, setSelectedCsvName] = useState<string | null>(null)
+  const [selectedImgName, setSelectedImgName] = useState<string | null>(null)
+  const [selectedLblName, setSelectedLblName] = useState<string | null>(null)
+
   const csvRef = useRef<HTMLInputElement>(null)
   const imgRef = useRef<HTMLInputElement>(null)
   const lblRef = useRef<HTMLInputElement>(null)
@@ -107,13 +112,36 @@ export function DatasetPage() {
           {mode === 'csv' && (
             <>
               <div className="space-y-2">
-                <Label>CSV file</Label>
-                <Input type="file" accept=".csv" ref={csvRef} />
+                {/* Bug 4: matching htmlFor/id */}
+                <Label htmlFor="csv-file-input">CSV file</Label>
+                {/* Bug 3: styled custom file trigger */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    accept=".csv"
+                    ref={csvRef}
+                    id="csv-file-input"
+                    className="hidden"
+                    onChange={e => setSelectedCsvName(e.target.files?.[0]?.name ?? null)}
+                  />
+                  <label
+                    htmlFor="csv-file-input"
+                    className="inline-flex items-center gap-2 cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors"
+                  >
+                    <Upload className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Choose file</span>
+                  </label>
+                  <span className="text-sm text-muted-foreground truncate">
+                    {selectedCsvName ?? 'No file chosen'}
+                  </span>
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label>Validation split (%)</Label>
+                  {/* Bug 4: matching htmlFor/id */}
+                  <Label htmlFor="val-split-csv">Validation split (%)</Label>
                   <Input
+                    id="val-split-csv"
                     type="number"
                     min="0"
                     max="50"
@@ -122,8 +150,9 @@ export function DatasetPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>Label columns (from right)</Label>
+                  <Label htmlFor="label-cols">Label columns (from right)</Label>
                   <Input
+                    id="label-cols"
                     type="number"
                     min="1"
                     value={labelCols}
@@ -137,16 +166,55 @@ export function DatasetPage() {
           {mode === 'idx' && (
             <>
               <div className="space-y-2">
-                <Label>Images file (IDX3)</Label>
-                <Input type="file" ref={imgRef} />
+                <Label htmlFor="idx-images-input">Images file (IDX3)</Label>
+                {/* Bug 3: styled custom file trigger */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={imgRef}
+                    id="idx-images-input"
+                    className="hidden"
+                    onChange={e => setSelectedImgName(e.target.files?.[0]?.name ?? null)}
+                  />
+                  <label
+                    htmlFor="idx-images-input"
+                    className="inline-flex items-center gap-2 cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors"
+                  >
+                    <Upload className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Choose file</span>
+                  </label>
+                  <span className="text-sm text-muted-foreground truncate">
+                    {selectedImgName ?? 'No file chosen'}
+                  </span>
+                </div>
               </div>
               <div className="space-y-2">
-                <Label>Labels file (IDX1)</Label>
-                <Input type="file" ref={lblRef} />
+                <Label htmlFor="idx-labels-input">Labels file (IDX1)</Label>
+                {/* Bug 3: styled custom file trigger */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="file"
+                    ref={lblRef}
+                    id="idx-labels-input"
+                    className="hidden"
+                    onChange={e => setSelectedLblName(e.target.files?.[0]?.name ?? null)}
+                  />
+                  <label
+                    htmlFor="idx-labels-input"
+                    className="inline-flex items-center gap-2 cursor-pointer rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent transition-colors"
+                  >
+                    <Upload className="h-4 w-4 text-muted-foreground" />
+                    <span className="text-muted-foreground">Choose file</span>
+                  </label>
+                  <span className="text-sm text-muted-foreground truncate">
+                    {selectedLblName ?? 'No file chosen'}
+                  </span>
+                </div>
               </div>
               <div className="space-y-2">
-                <Label>Validation split (%)</Label>
+                <Label htmlFor="val-split-idx">Validation split (%)</Label>
                 <Input
+                  id="val-split-idx"
                   type="number"
                   min="0"
                   max="50"
@@ -160,16 +228,21 @@ export function DatasetPage() {
           {mode === 'builtin' && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Dataset</Label>
-                <Select value={builtin} onChange={e => setBuiltin(e.target.value as BuiltinName)}>
+                <Label htmlFor="builtin-select">Dataset</Label>
+                <Select
+                  id="builtin-select"
+                  value={builtin}
+                  onChange={e => setBuiltin(e.target.value as BuiltinName)}
+                >
                   <option value="xor">XOR</option>
                   <option value="circles">Circles</option>
                   <option value="blobs">Blobs</option>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Validation split (%)</Label>
+                <Label htmlFor="val-split-builtin">Validation split (%)</Label>
                 <Input
+                  id="val-split-builtin"
                   type="number"
                   min="0"
                   max="50"

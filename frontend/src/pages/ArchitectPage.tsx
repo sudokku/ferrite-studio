@@ -48,6 +48,16 @@ export function ArchitectPage() {
   const [libSuccess, setLibSuccess] = useState(false)
   const [libPending, setLibPending] = useState(false)
 
+  // Bug 1: derive input_size from image dimensions when not numeric
+  const computedInputSize =
+    inputKind === 'numeric'
+      ? Number(inputSize)
+      : inputKind === 'grayscale'
+        ? Number(imgWidth) * Number(imgHeight)
+        : Number(imgWidth) * Number(imgHeight) * 3
+
+  const channels = inputKind === 'rgb' ? 3 : 1
+
   const mutation = useMutation({
     mutationFn: saveArchitect,
     onSuccess: (res) => {
@@ -70,7 +80,8 @@ export function ArchitectPage() {
   const buildBody = (): SaveArchitectBody => ({
     name,
     description,
-    input_size: Number(inputSize),
+    // Bug 1: use computed size derived from image dimensions
+    input_size: computedInputSize,
     loss_type: lossType,
     learning_rate: Number(lr),
     batch_size: Number(batchSize),
@@ -138,12 +149,19 @@ export function ArchitectPage() {
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label>Name</Label>
-              <Input placeholder="my_model" value={name} onChange={e => setName(e.target.value)} />
+              {/* Bug 4: matching id/htmlFor */}
+              <Label htmlFor="model-name">Name</Label>
+              <Input
+                id="model-name"
+                placeholder="my_model"
+                value={name}
+                onChange={e => setName(e.target.value)}
+              />
             </div>
             <div className="space-y-2">
-              <Label>Description (optional)</Label>
+              <Label htmlFor="model-description">Description (optional)</Label>
               <Input
+                id="model-description"
                 placeholder="MNIST classifier"
                 value={description}
                 onChange={e => setDescription(e.target.value)}
@@ -159,13 +177,25 @@ export function ArchitectPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-2 gap-4">
+            {/* Bug 1: only show manual input_size field for numeric mode */}
+            {inputKind === 'numeric' && (
+              <div className="space-y-2">
+                <Label htmlFor="input-size">Input size (features)</Label>
+                <Input
+                  id="input-size"
+                  type="number"
+                  value={inputSize}
+                  onChange={e => setInputSize(e.target.value)}
+                />
+              </div>
+            )}
             <div className="space-y-2">
-              <Label>Input size (features)</Label>
-              <Input type="number" value={inputSize} onChange={e => setInputSize(e.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label>Input type</Label>
-              <Select value={inputKind} onChange={e => setInputKind(e.target.value as InputKind)}>
+              <Label htmlFor="input-kind">Input type</Label>
+              <Select
+                id="input-kind"
+                value={inputKind}
+                onChange={e => setInputKind(e.target.value as InputKind)}
+              >
                 {INPUT_KINDS.map(k => (
                   <option key={k.value} value={k.value}>{k.label}</option>
                 ))}
@@ -173,15 +203,34 @@ export function ArchitectPage() {
             </div>
           </div>
           {inputKind !== 'numeric' && (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Width</Label>
-                <Input type="number" value={imgWidth} onChange={e => setImgWidth(e.target.value)} />
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="img-width">Width</Label>
+                  <Input
+                    id="img-width"
+                    type="number"
+                    value={imgWidth}
+                    onChange={e => setImgWidth(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="img-height">Height</Label>
+                  <Input
+                    id="img-height"
+                    type="number"
+                    value={imgHeight}
+                    onChange={e => setImgHeight(e.target.value)}
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label>Height</Label>
-                <Input type="number" value={imgHeight} onChange={e => setImgHeight(e.target.value)} />
-              </div>
+              {/* Bug 1: read-only computed value display */}
+              <p className="text-sm text-muted-foreground">
+                Auto:{' '}
+                <span className="font-medium text-foreground">
+                  {imgWidth} × {imgHeight} × {channels} = {computedInputSize}
+                </span>
+              </p>
             </div>
           )}
         </CardContent>
@@ -196,9 +245,10 @@ export function ArchitectPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           {layers.map((layer, i) => (
-            <div key={i} className="flex items-center gap-3 p-3 rounded-md border bg-muted/30">
-              <span className="text-xs text-muted-foreground w-5">{i + 1}</span>
-              <div className="flex-1 space-y-1">
+            // Bug 2: give Neurons a fixed narrow width, let Activation take remaining space
+            <div key={i} className="flex items-center gap-2 p-2 rounded-md border bg-muted/30">
+              <span className="text-xs text-muted-foreground w-5 shrink-0">{i + 1}</span>
+              <div className="w-24 shrink-0 space-y-1">
                 <Label className="text-xs">Neurons</Label>
                 <Input
                   type="number"
@@ -212,7 +262,6 @@ export function ArchitectPage() {
                 <Select
                   value={layer.activation}
                   onChange={e => updateLayer(i, 'activation', e.target.value)}
-                  className="h-8 text-sm"
                 >
                   {ACTIVATIONS.map(a => <option key={a} value={a}>{a}</option>)}
                 </Select>
@@ -221,7 +270,7 @@ export function ArchitectPage() {
                 variant="ghost"
                 size="icon"
                 onClick={() => removeLayer(i)}
-                className="text-destructive hover:text-destructive"
+                className="text-destructive hover:text-destructive shrink-0"
               >
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -239,22 +288,39 @@ export function ArchitectPage() {
         </CardHeader>
         <CardContent className="grid grid-cols-3 gap-4">
           <div className="space-y-2">
-            <Label>Loss type</Label>
-            <Select value={lossType} onChange={e => setLossType(e.target.value)}>
+            {/* Bug 4: matching id/htmlFor for all hyperparameter fields */}
+            <Label htmlFor="loss-type">Loss type</Label>
+            <Select id="loss-type" value={lossType} onChange={e => setLossType(e.target.value)}>
               {LOSS_TYPES.map(l => <option key={l} value={l}>{l}</option>)}
             </Select>
           </div>
           <div className="space-y-2">
-            <Label>Learning rate</Label>
-            <Input type="number" step="0.001" value={lr} onChange={e => setLr(e.target.value)} />
+            <Label htmlFor="learning-rate">Learning rate</Label>
+            <Input
+              id="learning-rate"
+              type="number"
+              step="0.001"
+              value={lr}
+              onChange={e => setLr(e.target.value)}
+            />
           </div>
           <div className="space-y-2">
-            <Label>Batch size</Label>
-            <Input type="number" value={batchSize} onChange={e => setBatchSize(e.target.value)} />
+            <Label htmlFor="batch-size">Batch size</Label>
+            <Input
+              id="batch-size"
+              type="number"
+              value={batchSize}
+              onChange={e => setBatchSize(e.target.value)}
+            />
           </div>
           <div className="space-y-2">
-            <Label>Epochs</Label>
-            <Input type="number" value={epochs} onChange={e => setEpochs(e.target.value)} />
+            <Label htmlFor="epochs">Epochs</Label>
+            <Input
+              id="epochs"
+              type="number"
+              value={epochs}
+              onChange={e => setEpochs(e.target.value)}
+            />
           </div>
         </CardContent>
       </Card>

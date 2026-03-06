@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { FlaskConical, Upload } from 'lucide-react'
 import { getTestModels, runInference, importModel, type InferResult, type ModelInfo } from '@/api/test'
+import { getTrainStatus } from '@/api/train'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -147,6 +148,23 @@ function resolveAutoMode(info: ModelInfo | null): ManualMode | null {
 
 export function TestPage() {
   const [selectedModel, setSelectedModel] = useState<string | undefined>()
+
+  // Bug 5: pre-populate model from the session's last training run
+  const { data: trainData } = useQuery({
+    queryKey: ['train'],
+    queryFn: getTrainStatus,
+    staleTime: 5_000,
+  })
+
+  useEffect(() => {
+    if (selectedModel === undefined && trainData?.model_path) {
+      const name = trainData.model_path
+        .replace(/^trained_models\//, '')
+        .replace(/\.json$/i, '')
+      setSelectedModel(name)
+    }
+  }, [trainData?.model_path, selectedModel])
+
   const { data } = useQuery({
     queryKey: ['test', selectedModel],
     queryFn: () => getTestModels(selectedModel),
