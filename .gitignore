@@ -5,6 +5,7 @@ api/**/__pycache__/
 api/**/*.pyc
 api/ferrite.db
 api/.env
+api/data/
 
 # Node
 frontend/node_modules/
